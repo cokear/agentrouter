@@ -4,6 +4,7 @@ import base64
 import sys
 from urllib.parse import urlparse, parse_qs, unquote
 
+
 def generate_config(proxy_url):
     # 如果已经是 JSON 格式，直接原样返回
     proxy_url = proxy_url.strip()
@@ -17,7 +18,7 @@ def generate_config(proxy_url):
     # 处理单节点链接
     parsed = urlparse(proxy_url)
     scheme = parsed.scheme.lower()
-    
+
     outbound = {
         "tag": "proxy"
     }
@@ -27,80 +28,135 @@ def generate_config(proxy_url):
         outbound["type"] = "tuic"
         outbound["server"] = parsed.hostname
         outbound["server_port"] = parsed.port
-        
+
         auth_user = unquote(parsed.username or "")
         auth_pass = unquote(parsed.password or "")
-        
+
         if ":" in auth_user:
             outbound["uuid"], outbound["password"] = auth_user.split(":", 1)
         else:
             outbound["uuid"] = auth_user
             outbound["password"] = auth_pass
-        
+
         params = parse_qs(parsed.query)
-        outbound["congestion_control"] = params.get("congestion_control", ["bbr"])[0]
-        outbound["udp_relay_mode"] = params.get("udp_relay_mode", ["quic-rfc"])[0]
-        
+        outbound["congestion_control"] = unquote(params.get("congestion_control", ["bbr"])[0])
+        outbound["udp_relay_mode"] = unquote(params.get("udp_relay_mode", ["quic-rfc"])[0])
+
         outbound["tls"] = {"enabled": True}
-        if "sni" in params: outbound["tls"]["server_name"] = params["sni"][0]
-        if "alpn" in params: outbound["tls"]["alpn"] = params["alpn"][0].split(',')
-        if "insecure" in params and params["insecure"][0] in ["1", "true"]: outbound["tls"]["insecure"] = True
+        if "sni" in params:
+            outbound["tls"]["server_name"] = unquote(params["sni"][0])
+        if "alpn" in params:
+            outbound["tls"]["alpn"] = [unquote(x) for x in params["alpn"][0].split(',') if x]
+        if "insecure" in params and params["insecure"][0] in ["1", "true"]:
+            outbound["tls"]["insecure"] = True
 
     elif scheme in ["hysteria2", "hy2"]:
         outbound["type"] = "hysteria2"
         outbound["server"] = parsed.hostname
         outbound["server_port"] = parsed.port
         outbound["password"] = unquote(parsed.username or "")
-            
+
         params = parse_qs(parsed.query)
         outbound["tls"] = {"enabled": True}
-        if "sni" in params: outbound["tls"]["server_name"] = params["sni"][0]
-        if "insecure" in params and params["insecure"][0] in ["1", "true"]: outbound["tls"]["insecure"] = True
+        if "sni" in params:
+            outbound["tls"]["server_name"] = unquote(params["sni"][0])
+        if "alpn" in params:
+            outbound["tls"]["alpn"] = [unquote(x) for x in params["alpn"][0].split(',') if x]
+        if "insecure" in params and params["insecure"][0] in ["1", "true"]:
+            outbound["tls"]["insecure"] = True
 
     elif scheme == "vless":
         outbound["type"] = "vless"
         outbound["server"] = parsed.hostname
         outbound["server_port"] = parsed.port
         outbound["uuid"] = unquote(parsed.username or "")
-        
+
         params = parse_qs(parsed.query)
-        outbound["flow"] = params.get("flow", [""])[0]
-        
-        tls_enabled = params.get("security", [""])[0] in ["tls", "reality"]
+
+        flow = unquote(params.get("flow", [""])[0])
+        if flow:
+            outbound["flow"] = flow
+
+        security = unquote(params.get("security", [""])[0])
+        tls_enabled = security in ["tls", "reality"]
         if tls_enabled:
             outbound["tls"] = {"enabled": True}
-            if "sni" in params: outbound["tls"]["server_name"] = params["sni"][0]
-            if "fp" in params: outbound["tls"]["utls"] = {"enabled": True, "fingerprint": params["fp"][0]}
-            if "pbk" in params: outbound["tls"]["reality"] = {"enabled": True, "public_key": params["pbk"][0], "short_id": params.get("sid", [""])[0]}
-        
-        # 传输层配置
-        network = params.get("type", ["tcp"])[0]
+            if "sni" in params:
+                outbound["tls"]["server_name"] = unquote(params["sni"][0])
+            if "fp" in params:
+                outbound["tls"]["utls"] = {"enabled": True, "fingerprint": unquote(params["fp"][0])}
+            if "pbk" in params:
+                outbound["tls"]["reality"] = {
+                    "enabled": True,
+                    "public_key": unquote(params["pbk"][0]),
+                    "short_id": unquote(params.get("sid", [""])[0])
+                }
+            if "alpn" in params:
+                outbound["tls"]["alpn"] = [unquote(x) for x in params["alpn"][0].split(',') if x]
+            if "allowInsecure" in params and params["allowInsecure"][0] in ["1", "true"]:
+                outbound["tls"]["insecure"] = True
+
+        network = unquote(params.get("type", ["tcp"])[0])
         if network == "ws":
-            outbound["transport"] = {"type": "ws", "path": params.get("path", ["/"])[0], "headers": {"Host": params.get("host", [""])[0]}}
+            outbound["transport"] = {
+                "type": "ws",
+                "path": unquote(params.get("path", ["/"])[0]),
+                "headers": {"Host": unquote(params.get("host", [""])[0])}
+            }
         elif network == "grpc":
-            outbound["transport"] = {"type": "grpc", "service_name": params.get("serviceName", [""])[0]}
+            outbound["transport"] = {
+                "type": "grpc",
+                "service_name": unquote(params.get("serviceName", [""])[0])
+            }
+        elif network == "http":
+            outbound["transport"] = {
+                "type": "http",
+                "path": unquote(params.get("path", ["/"])[0]),
+                "host": [unquote(params.get("host", [""])[0])]
+            }
 
     elif scheme == "trojan":
         outbound["type"] = "trojan"
         outbound["server"] = parsed.hostname
         outbound["server_port"] = parsed.port
         outbound["password"] = unquote(parsed.username or "")
-        
+
         params = parse_qs(parsed.query)
         outbound["tls"] = {"enabled": True}
-        if "sni" in params: outbound["tls"]["server_name"] = params["sni"][0]
+        if "sni" in params:
+            outbound["tls"]["server_name"] = unquote(params["sni"][0])
+        if "alpn" in params:
+            outbound["tls"]["alpn"] = [unquote(x) for x in params["alpn"][0].split(',') if x]
+        if "allowInsecure" in params and params["allowInsecure"][0] in ["1", "true"]:
+            outbound["tls"]["insecure"] = True
+
+        network = unquote(params.get("type", ["tcp"])[0])
+        if network == "ws":
+            outbound["transport"] = {
+                "type": "ws",
+                "path": unquote(params.get("path", ["/"])[0]),
+                "headers": {"Host": unquote(params.get("host", [""])[0])}
+            }
+        elif network == "grpc":
+            outbound["transport"] = {
+                "type": "grpc",
+                "service_name": unquote(params.get("serviceName", [""])[0])
+            }
 
     elif scheme in ["ss", "shadowsocks"]:
         # ss://base64(method:password)@host:port
         outbound["type"] = "shadowsocks"
         outbound["server"] = parsed.hostname
         outbound["server_port"] = parsed.port
-        
+
         if parsed.username:
             try:
                 decoded = base64.b64decode(parsed.username + "==").decode()
                 if ":" in decoded:
                     outbound["method"], outbound["password"] = decoded.split(":", 1)
+                else:
+                    outbound["method"] = unquote(parsed.username)
+                    outbound["password"] = unquote(parsed.password or "")
             except:
                 outbound["method"] = unquote(parsed.username)
                 outbound["password"] = unquote(parsed.password or "")
@@ -126,13 +182,14 @@ def generate_config(proxy_url):
                 if v_info.get("alpn"):
                     outbound["tls"]["alpn"] = [x for x in v_info.get("alpn", "").split(",") if x]
 
-            if v_info.get("net") == "ws":
+            net = v_info.get("net", "")
+            if net == "ws":
                 ws_path = v_info.get("path") or "/"
-                ws_headers = {"Host": v_info.get("host") or v_info.get("sni") or v_info.get("add")}
+                ws_host = v_info.get("host") or v_info.get("sni") or v_info.get("add")
                 ws_transport = {
                     "type": "ws",
                     "path": ws_path,
-                    "headers": ws_headers
+                    "headers": {"Host": ws_host}
                 }
                 if "?" in ws_path:
                     path_only, query = ws_path.split("?", 1)
@@ -141,13 +198,20 @@ def generate_config(proxy_url):
                     if ws_params.get("ed"):
                         ws_transport["max_early_data"] = int(ws_params["ed"][0])
                         ws_transport["early_data_header_name"] = "Sec-WebSocket-Protocol"
+                outbound["transport"] = ws_transport
+            elif net == "grpc":
                 outbound["transport"] = {
-                    **ws_transport
+                    "type": "grpc",
+                    "service_name": v_info.get("path", "")
                 }
-            elif v_info.get("net") == "grpc":
-                outbound["transport"] = {"type": "grpc", "service_name": v_info.get("path", "")}
-        except:
-            print("Failed to parse VMess config")
+            elif net == "http":
+                outbound["transport"] = {
+                    "type": "http",
+                    "path": v_info.get("path") or "/",
+                    "host": [v_info.get("host") or v_info.get("add")]
+                }
+        except Exception as e:
+            print(f"Failed to parse VMess config: {e}")
             sys.exit(1)
 
     elif scheme == "socks5":
@@ -161,7 +225,6 @@ def generate_config(proxy_url):
             outbound["password"] = passwd
 
     else:
-        # 其他协议回退到直接填入（可能是简单订阅或不支持的协议）
         print(f"Unknown scheme: {scheme}, please use full JSON for complex configs.")
         sys.exit(1)
 
@@ -191,12 +254,13 @@ def generate_config(proxy_url):
     }
     return json.dumps(config, indent=2)
 
+
 if __name__ == "__main__":
     proxy_str = os.environ.get("PROXY_STR", "")
     if not proxy_str:
         print("PROXY_STR is empty")
         sys.exit(1)
-        
+
     final_config = generate_config(proxy_str)
     with open("config.json", "w") as f:
         f.write(final_config)
